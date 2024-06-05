@@ -149,6 +149,8 @@ class MainViewController: UIViewController, UITableViewDataSource, ChartViewDele
     var lastSpeechTime: Date?
 
     var autoScrollPauseUntil: Date? = nil
+    
+    var IsNotLooping = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -277,6 +279,7 @@ class MainViewController: UIViewController, UITableViewDataSource, ChartViewDele
         restartAllTimers()
         currentCage = nil
         currentSage = nil
+        lastSpeechTime = nil
         refreshControl.endRefreshing()
     }
     
@@ -420,9 +423,63 @@ class MainViewController: UIViewController, UITableViewDataSource, ChartViewDele
         }
         
         restartAllTimers()
-
+        checkAndNotifyVersionStatus()
+        checkAppExpirationStatus()
     }
     
+    func checkAndNotifyVersionStatus() {
+        let versionManager = AppVersionManager()
+        versionManager.checkForNewVersion { latestVersion, isNewer, isBlacklisted in
+            let now = Date()
+            
+            // Check if the current version is blacklisted, or if there is a newer version available
+            if isBlacklisted {
+                let lastBlacklistShown = UserDefaultsRepository.lastBlacklistNotificationShown.value ?? Date.distantPast
+                if now.timeIntervalSince(lastBlacklistShown) > 86400 { // 24 hours
+                    self.versionAlert(message: "The current version has a critical issue and should be updated as soon as possible.")
+                    UserDefaultsRepository.lastBlacklistNotificationShown.value = now
+                    UserDefaultsRepository.lastVersionUpdateNotificationShown.value = now
+                }
+            } else if isNewer {
+                let lastVersionUpdateShown = UserDefaultsRepository.lastVersionUpdateNotificationShown.value ?? Date.distantPast
+                if now.timeIntervalSince(lastVersionUpdateShown) > 1209600 { // 2 weeks
+                    self.versionAlert(message: "A new version is available: \(latestVersion ?? "Unknown"). It is recommended to update.")
+                    UserDefaultsRepository.lastVersionUpdateNotificationShown.value = now
+                }
+            }
+        }
+    }
+
+    func versionAlert(title: String = "Update Available", message: String) {
+        DispatchQueue.main.async {
+            let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+            self.present(alert, animated: true)
+        }
+    }
+
+    func checkAppExpirationStatus() {
+        let now = Date()
+        let expirationDate = BuildDetails.default.calculateExpirationDate()
+        let weekBeforeExpiration = Calendar.current.date(byAdding: .day, value: -7, to: expirationDate)!
+        
+        if now >= weekBeforeExpiration {
+            let lastExpirationShown = UserDefaultsRepository.lastExpirationNotificationShown.value ?? Date.distantPast
+            if now.timeIntervalSince(lastExpirationShown) > 86400 { // 24 hours
+                expirationAlert()
+                UserDefaultsRepository.lastExpirationNotificationShown.value = now
+            }
+        }
+    }
+
+    func expirationAlert() {
+        DispatchQueue.main.async {
+            let alert = UIAlertController(title: "App Expiration Warning", message: "This app will expire in less than a week. Please rebuild to continue using it.", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+            self.present(alert, animated: true)
+        }
+    }
+
     @objc override func viewDidAppear(_ animated: Bool) {
         showHideNSDetails()
     }
@@ -442,13 +499,18 @@ class MainViewController: UIViewController, UITableViewDataSource, ChartViewDele
     func showHideNSDetails() {
         var isHidden = false
         var isEnabled = true
-        if UserDefaultsRepository.url.value == "" || !UserDefaultsRepository.loopUser.value {
+        if UserDefaultsRepository.url.value == "" {
             isHidden = true
             isEnabled = false
         }
         
         LoopStatusLabel.isHidden = isHidden
-        PredictionLabel.isHidden = isHidden
+        if IsNotLooping {
+            PredictionLabel.isHidden = true
+        }
+        else {
+            PredictionLabel.isHidden = isHidden
+        }
         infoTable.isHidden = isHidden
         
         if UserDefaultsRepository.hideInfoTable.value {
@@ -465,14 +527,11 @@ class MainViewController: UIViewController, UITableViewDataSource, ChartViewDele
     }
     
     func updateBadge(val: Int) {
-        DispatchQueue.main.async {
         if UserDefaultsRepository.appBadge.value {
             let latestBG = String(val)
-            UIApplication.shared.applicationIconBadgeNumber = Int(bgUnits.removePeriodForBadge(bgUnits.toDisplayUnits(latestBG))) ?? val
+            UIApplication.shared.applicationIconBadgeNumber = Int(bgUnits.removePeriodAndCommaForBadge(bgUnits.toDisplayUnits(latestBG))) ?? val
         } else {
             UIApplication.shared.applicationIconBadgeNumber = 0
-        }
-//        if UserDefaultsRepository.debugLog.value { self.writeDebugLog(value: "updated badge") }
         }
     }
     
